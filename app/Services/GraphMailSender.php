@@ -23,6 +23,9 @@ class GraphMailSender
     /** true só quando as 3 credenciais (mesmas do leitor) estão preenchidas. */
     public static function enabled(): bool
     {
+        if (config('mail.kill_switch')) {
+            return false;
+        }
         return GraphMailReader::enabled();
     }
 

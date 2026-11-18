@@ -34,6 +34,9 @@ class GraphMailer
     /** true só quando as 3 credenciais estão preenchidas. */
     public static function enabled(): bool
     {
+        if (config('mail.kill_switch')) {
+            return false;
+        }
         $c = config('services.graph');
 
         return !empty($c['tenant_id'])

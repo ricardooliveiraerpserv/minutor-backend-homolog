@@ -16,6 +16,9 @@ return [
 
     'default' => env('MAIL_MAILER', 'log'),
 
+    // Kill-switch (bases de teste): true cancela TODO envio (Laravel Mail e Graph). Produção não define.
+    'kill_switch' => (bool) env('MAIL_KILL_SWITCH', false),
+
     /*
     |--------------------------------------------------------------------------
     | Mailer Configurations

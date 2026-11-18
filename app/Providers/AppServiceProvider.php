@@ -71,6 +71,14 @@ class AppServiceProvider extends ServiceProvider
     {
         Carbon::setLocale('pt_BR');
 
+        // Kill-switch de e-mail (DEV2/teste): cancela qualquer envio, inclusive mailers registrados em runtime (user_smtp).
+        Event::listen(MessageSending::class, function () {
+            if (config('mail.kill_switch')) {
+                \Illuminate\Support\Facades\Log::info('[mail.kill_switch] envio cancelado');
+                return false;
+            }
+        });
+
         // Registrar listeners de email para debug
         Event::listen(MessageSending::class, EmailSentListener::class);
         Event::listen(MessageSent::class, EmailSentListener::class);
