@@ -457,6 +457,20 @@ class HelpDeskPortalController extends Controller
         }
         $ticket->update(['last_activity_at' => now()]);
         HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $comment->id, 'via' => 'portal']]);
+        // Resposta do cliente PELO PORTAL = mesmo efeito da resposta por e-mail (antes só gravava):
+        // (1) reativa o atendimento (ex.: Aguardando cliente → Em atendimento). Resolvido/encerrado não:
+        //     no portal o cliente tem Aceitar/Recusar explícitos; (2) dispara os gatilhos
+        //     ("Nova resposta do cliente → responsável") p/ o agente receber o aviso.
+        try {
+            $st = $ticket->fresh('status')->status;
+            if ($st && !$st->is_resolved && !$st->is_terminal) app(\App\Services\HelpDeskEmailIngestor::class)->moveToEmAndamento($ticket->fresh());
+        } catch (\Throwable $e) { \Log::warning('HelpDesk portal: reativar após resposta falhou: ' . $e->getMessage()); }
+        $u = $request->user();
+        try {
+            \App\Services\HelpDeskTriggerEngine::queue('comment_added', $ticket->fresh(), [
+                'comment_by' => 'client', 'visibility' => 'customer', 'via' => 'portal', 'actor_id' => $u?->id, 'actor_email' => $u?->email,
+            ]);
+        } catch (\Throwable $e) { \Log::warning('HelpDesk portal: gatilho comment_added falhou: ' . $e->getMessage()); }
         return response()->json(['data' => HelpDeskPortalPresenter::comment($comment->fresh()->load('author:id,name'), $request->user()->id)], 201);
     }
 

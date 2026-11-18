@@ -400,7 +400,7 @@ class HelpDeskEmailIngestor
     /** Move o chamado para "Em andamento" quando o cliente responde por e-mail. Se estava RESOLVIDO,
      *  faz a reabertura (reopen_count/reopened_at) como no fluxo de recusa do portal. Se vinha de um
      *  status de espera agendado, grava o snapshot p/ o botão "voltar ao status anterior com a data". */
-    private function moveToEmAndamento(HelpDeskTicket $t): void
+    public function moveToEmAndamento(HelpDeskTicket $t): void
     {
         // Status da EMPRESA do chamado (sem o filtro de empresa ativa — senão um chamado BIZIFY recebia o status da ERPSERV).
         $em = HelpDeskStatus::withoutGlobalScopes()->where('company_id', $t->company_id)->where('key', 'em_andamento')->where('active', true)->first()
