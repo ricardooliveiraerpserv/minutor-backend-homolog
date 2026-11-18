@@ -427,6 +427,16 @@ class HelpDeskPortalController extends Controller
         }
         $this->sla->apply($ticket);
         HelpDeskTicketEvent::log($ticket->id, 'created', ['to_value' => $ticket->subject, 'meta' => ['via' => 'portal']]);
+        // Gatilhos de ABERTURA (confirmação ao cliente, triagem p/ a coordenação…) — iguais à abertura
+        // por e-mail. Antes o portal só gravava e ninguém era avisado.
+        try {
+            $u = $request->user();
+            \App\Services\HelpDeskTriggerEngine::queue('ticket_created', $ticket->fresh(), [
+                // SEM actor_email (igual à abertura por e-mail): a confirmação AO CLIENTE não pode ser
+                // cortada pelo "não enviar p/ quem disparou".
+                'comment_by' => 'client', 'via' => 'portal', 'actor_id' => $u?->id,
+            ]);
+        } catch (\Throwable $e) { \Log::warning('HelpDesk portal: gatilho ticket_created falhou: ' . $e->getMessage()); }
 
         $ticket->load('status:id,key,label,color,is_open,sla_paused');
         return response()->json(['data' => HelpDeskPortalPresenter::ticket($ticket, $this->sla->clientSummary($ticket))], 201);
